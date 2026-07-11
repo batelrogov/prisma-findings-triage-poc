@@ -11,6 +11,7 @@ from langchain_core.messages import HumanMessage, SystemMessage
 import json
 import os
 import sys
+import time
 import yaml
 
 # Default Bedrock model used for analytical security reasoning.
@@ -22,6 +23,8 @@ DEFAULT_CONFIG = {
     "model_id": BEDROCK_MODEL_ID,
     "temperature": 0,
     "trusted_cidr": "10.0.0.0/8",
+    "max_llm_retries": 3,          # New: Max attempts for transient LLM API rate limits
+    "llm_retry_delay_seconds": 2,  # New: Base delay for exponential backoff
     "output": {
         "report_path": "audit_report.md",
         "terraform_path": "remediation.tf",
@@ -47,7 +50,6 @@ def load_config(config_path="config.yaml"):
                 config[key] = value
 
     return config
-
 
 
 def init_bedrock_llm(model_id=BEDROCK_MODEL_ID, region_name=None, temperature=0):
@@ -170,15 +172,11 @@ A prioritized, bulleted list of next actions.
 Be factual, concise, and strictly analytical. Do not include any text outside the markdown report."""
 
 
-def analyze_security_data(raw_data, llm=None):
+def analyze_security_data(raw_data, llm=None, max_retries=3, base_delay=2):
     """Analyze fetched AWS configuration data with the Bedrock LLM.
 
-    `raw_data` is the AWS configuration collected in earlier steps (e.g. a dict
-    combining security groups and S3 bucket policies). It is serialized to JSON
-    and sent to the LLM together with a structured system prompt instructing it
-    to act as a Senior AWS Cloud Security Auditor and emit a markdown report
-    with severity-rated findings and remediation steps.
-
+    Includes an automated exponential backoff retry loop to safeguard against
+    transient API rate limiting (ThrottlingException) in production.
     Returns the LLM's markdown report as a string.
     """
     if llm is None:
@@ -196,8 +194,19 @@ def analyze_security_data(raw_data, llm=None):
         ),
     ]
 
-    response = llm.invoke(messages)
-    return response.content
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = llm.invoke(messages)
+            return response.content
+        except Exception as exc:
+            if attempt == max_retries:
+                print(f"CRITICAL: Bedrock model invocation failed after {max_retries} attempts.", file=sys.stderr)
+                raise exc
+            
+            # Calculate exponential delay: 2s, 4s, 8s...
+            delay = base_delay * (2 ** (attempt - 1))
+            print(f"WARNING: Bedrock API call failed ({exc}). Retrying in {delay}s... ({attempt}/{max_retries})", file=sys.stderr)
+            time.sleep(delay)
 
 
 TERRAFORM_REMEDIATION_SYSTEM_PROMPT = """You are a Senior AWS Cloud Security Engineer and Terraform expert.
@@ -229,13 +238,11 @@ def _strip_code_fences(text):
     return stripped
 
 
-def generate_remediation_terraform(raw_data, report=None, llm=None):
+def generate_remediation_terraform(raw_data, report=None, llm=None, max_retries=3, base_delay=2):
     """Generate a Terraform snippet that closes the discovered security gaps.
 
-    `raw_data` is the same AWS configuration passed to `analyze_security_data`.
-    An optional `report` (the markdown audit) can be supplied to give the model
-    additional context. Returns valid Terraform HCL as a string, with any
-    surrounding markdown code fence removed.
+    Includes an automated exponential backoff retry loop to handle transient 
+    AWS LLM throttling thresholds gracefully. Returns valid Terraform HCL.
     """
     if llm is None:
         llm = init_bedrock_llm()
@@ -257,8 +264,18 @@ def generate_remediation_terraform(raw_data, report=None, llm=None):
         HumanMessage(content=human_content),
     ]
 
-    response = llm.invoke(messages)
-    return _strip_code_fences(response.content)
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = llm.invoke(messages)
+            return _strip_code_fences(response.content)
+        except Exception as exc:
+            if attempt == max_retries:
+                print(f"CRITICAL: Bedrock Terraform generation failed after {max_retries} attempts.", file=sys.stderr)
+                raise exc
+            
+            delay = base_delay * (2 ** (attempt - 1))
+            print(f"WARNING: Bedrock API call failed ({exc}). Retrying in {delay}s... ({attempt}/{max_retries})", file=sys.stderr)
+            time.sleep(delay)
 
 
 def audit_and_remediate(
@@ -266,6 +283,8 @@ def audit_and_remediate(
     llm=None,
     report_path="audit_report.md",
     terraform_path="remediation.tf",
+    max_retries=3,
+    base_delay=2,
 ):
     """Run the full audit: produce a markdown report and a Terraform snippet.
 
@@ -276,8 +295,8 @@ def audit_and_remediate(
     if llm is None:
         llm = init_bedrock_llm()
 
-    report = analyze_security_data(raw_data, llm=llm)
-    terraform = generate_remediation_terraform(raw_data, report=report, llm=llm)
+    report = analyze_security_data(raw_data, llm=llm, max_retries=max_retries, base_delay=base_delay)
+    terraform = generate_remediation_terraform(raw_data, report=report, llm=llm, max_retries=max_retries, base_delay=base_delay)
 
     with open(report_path, "w", encoding="utf-8") as report_file:
         report_file.write(report)
@@ -299,6 +318,8 @@ def main():
     """Run the agent end to end: collect AWS data, audit, and remediate."""
     config = load_config()
     region = config.get("region")
+    max_retries = int(config.get("max_llm_retries", 3))
+    base_delay = int(config.get("llm_retry_delay_seconds", 2))
 
     try:
         print("Collecting AWS security configuration...")
@@ -311,12 +332,14 @@ def main():
             temperature=config.get("temperature", 0),
         )
 
-        print("Analyzing configuration and generating remediation...")
+        print("Analyzing configuration and generating remediation (with transient retry safeguards)...")
         results = audit_and_remediate(
             raw_data,
             llm=llm,
             report_path=config["output"]["report_path"],
             terraform_path=config["output"]["terraform_path"],
+            max_retries=max_retries,
+            base_delay=base_delay,
         )
     except NoCredentialsError:
         print(
@@ -339,5 +362,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-
-
