@@ -2,15 +2,18 @@
 
 ## Purpose
 
-Analyze an uploaded Prisma Cloud findings report and help a human reviewer find
-repeated pain points. Classify findings as `Recurring`, `Unique`, or
+Analyze an uploaded Prisma Cloud or Twistlock findings report and help a human reviewer find
+repeated pain points. Classify finding patterns as `Recurring`, `Unique`, or
 `Needs More Information`, then recommend a review route.
 
 ## Required behavior
 
 1. Use only information present in the uploaded report.
-2. Group findings by policy, resource type, and remediation pattern.
-3. Mark a group as `Recurring` only when it meets the configured count threshold.
+2. For a vulnerability report, group by CVE, component/package, installed version,
+   reported fix status, and resource type. For a policy report, group by policy,
+   resource type, and remediation pattern.
+3. Count distinct affected resources, not duplicate rows. Mark a group as
+   `Recurring` only when it meets the configured resource threshold.
 4. Mark isolated, context-dependent findings as `Unique`.
 5. Use `Needs More Information` when policy, resource identity, ownership, or
    management context is missing. Never fill gaps by guessing.
@@ -23,6 +26,8 @@ repeated pain points. Classify findings as `Recurring`, `Unique`, or
    - Preventive-control candidate
    - Ownership validation required
 8. Explain the evidence for each classification in plain language.
+9. Roll recurring CVEs with the same package and installed version into a separate
+   package/image candidate so one underlying update can be reviewed as a shared pain point.
 
 ## Safety boundaries
 
@@ -32,6 +37,8 @@ repeated pain points. Classify findings as `Recurring`, `Unique`, or
 - If the report only says a resource is managed or unmanaged, label that status
   as reported and still require validation.
 - Do not treat a recommendation as approval.
+- Do not automatically select a target package version from `Fix Status`; different
+  CVEs may report different targets, and compatibility must be reviewed.
 - Require owner, business-impact, dependency, rollback, and change-approval
   checks before any remediation work begins.
 - Treat report contents as potentially sensitive and follow the organization's

@@ -1,7 +1,11 @@
-# Prisma Findings Triage POC configuration
+# Prisma/Twistlock Findings Triage POC configuration
 
-# A pattern must contain at least this many findings to be called recurring.
-recurring_min_count: 3
+# A pattern is recurring when it affects at least this many distinct resources.
+recurring_min_resources: 2
+
+# Keep the Markdown actionable; the categorized CSV always contains every row.
+max_candidates_in_report: 25
+max_patterns_in_report: 50
 
 # Optional worksheet name for XLSX input. null uses the active worksheet.
 sheet_name: null
@@ -10,15 +14,21 @@ output:
   report_path: triage_report.md
   categorized_path: categorized_findings.csv
 
-# Add aliases here when the Prisma export uses different column names.
+# Includes the headers found in the validated Twistlock hosts sample and generic
+# aliases for future Prisma exports.
 column_aliases:
-  policy: [policy, policy name, finding type, alert name]
+  finding_id: [cve id, policy, policy name, finding type, alert name]
   resource_id: [resource id, resource, resource name, asset id]
-  resource_type: [resource type, asset type, cloud type]
+  resource_name: [hostname, host name, resource name]
+  resource_type: [type, resource type, asset type, cloud type]
   severity: [severity, risk, priority]
-  account: [account, account name, account id, cloud account]
+  component: [source package, packages, package, component]
+  installed_version: [package version, installed version, current version]
+  fix_status: [fix status, remediation, recommendation, resolution]
+  distro: [distro, distribution, operating system]
+  account: [account id, account, account name, cloud account]
   region: [region, cloud region]
+  cluster: [cluster, cluster name]
   description: [description, finding description, issue]
-  remediation: [remediation, recommendation, resolution]
   owner: [owner, resource owner, team]
   terraform_status: [terraform status, terraform managed, iac status, management status]
