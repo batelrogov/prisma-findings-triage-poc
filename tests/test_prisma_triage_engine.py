@@ -5,7 +5,7 @@ from pathlib import Path
 
 from openpyxl import Workbook
 
-from prisma_triage_agent import DEFAULT_CONFIG, classify_findings, normalize_findings, render_report, run_triage
+from prisma_triage_engine import DEFAULT_CONFIG, classify_findings, normalize_findings, render_report, run_triage
 
 
 def finding(resource_id, finding_id="CVE-2026-0001", **values):
