@@ -1,9 +1,9 @@
-# Microsoft Copilot Agent Instructions
+# Microsoft Copilot Review Guidelines
 
 ## Purpose
 
-Analyze an uploaded Prisma Cloud or Twistlock findings report and help a human reviewer find
-repeated pain points. Classify finding patterns as `Recurring`, `Unique`, or
+Define the guardrails for a future approved Microsoft Copilot interface that helps a human reviewer
+analyze an uploaded Prisma Cloud or Twistlock report. The interface should classify finding patterns as `Recurring`, `Unique`, or
 `Needs More Information`, then recommend a review route.
 
 ## Required behavior
