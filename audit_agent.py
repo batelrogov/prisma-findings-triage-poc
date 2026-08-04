@@ -1,4 +1,4 @@
-"""AWS security audit helpers backed by boto3.
+"""AWS security audit POC helpers backed by boto3.
 
 These functions collect AWS configuration data in a structured form that an
 LLM (e.g. via Amazon Bedrock) can parse and reason about later.
@@ -27,7 +27,7 @@ DEFAULT_CONFIG = {
     "llm_retry_delay_seconds": 2,  # New: Base delay for exponential backoff
     "output": {
         "report_path": "audit_report.md",
-        "terraform_path": "remediation.tf",
+        "proposal_path": "remediation_proposal.md",
     },
 }
 
@@ -169,6 +169,12 @@ For each finding use this structure:
 ## Recommendations
 A prioritized, bulleted list of next actions.
 
+SAFETY BOUNDARIES:
+- This is a focused proof of concept, not a replacement for AWS Security Hub,
+  AWS Config, or a CSPM platform.
+- Do not claim that any change has been applied. Recommendations are advisory
+  drafts that require resource-owner review and approval.
+
 Be factual, concise, and strictly analytical. Do not include any text outside the markdown report."""
 
 
@@ -209,48 +215,47 @@ def analyze_security_data(raw_data, llm=None, max_retries=3, base_delay=2):
             time.sleep(delay)
 
 
-TERRAFORM_REMEDIATION_SYSTEM_PROMPT = """You are a Senior AWS Cloud Security Engineer and Terraform expert.
+REMEDIATION_PROPOSAL_SYSTEM_PROMPT = """You are a Senior AWS Cloud Security Engineer and Terraform expert.
 
-You will be given raw AWS configuration data in JSON format (EC2 Security Group ingress rules and S3 bucket public access block settings) and, optionally, a prior markdown audit report. Generate Terraform (HCL) code that remediates the high-risk security gaps found in the data.
+You will be given raw AWS configuration data in JSON format (EC2 Security Group ingress rules and S3 bucket public access block settings) and, optionally, a prior markdown audit report. Generate a human-reviewable remediation proposal. It is a draft, not apply-ready remediation.
 
 REQUIREMENTS:
-- Produce ONLY valid Terraform HCL. No prose, no explanations outside of HCL comments.
-- For each insecure security group ingress rule (e.g. SSH port 22 or RDP port 3389 open to 0.0.0.0/0, or full "allow all" ingress), generate an `aws_security_group_rule` or `aws_vpc_security_group_ingress_rule` resource that restricts access to a parameterized trusted CIDR instead of 0.0.0.0/0. Reference the real GroupId via the `security_group_id` argument.
+- Produce Markdown with these sections: Draft status, proposed changes, candidate Terraform, mandatory validation checklist, and approval record.
+- Label all Terraform as unvalidated candidate code and place it in a fenced HCL block.
+- For each insecure security group ingress rule, explain that adding a restrictive rule DOES NOT remove or replace an existing permissive rule. Identify the permissive rule that would need separate, deliberate removal or revocation after ownership, dependencies, and access requirements are verified. Prefer proposing that the existing rule be imported and changed in its owning Terraform configuration; do not present a second restrictive rule as remediation. Never claim the candidate Terraform closes the exposure merely by adding a restrictive rule.
+- Do not guess whether existing resources or rules are already Terraform-managed. Flag import, state ownership, resource-address, provider-version, and configuration-conflict checks for a human reviewer.
 - For each S3 bucket missing a fully enabled Public Access Block, generate an `aws_s3_bucket_public_access_block` resource with all four flags set to true, referencing the real bucket name.
-- Use an input `variable "trusted_cidr"` (default "10.0.0.0/8") for any restricted CIDR so the user can override it.
-- Add a brief HCL comment above each resource referencing the specific finding (GroupId/BucketId, port, etc.).
-- Do not invent resources that are not implied by the data. If no remediation is needed, output a single HCL comment saying so.
+- Use an input `variable "trusted_cidr"` with the supplied draft default for restricted-access examples. State that the CIDR must be validated against actual administrative access requirements.
+- Do not invent resources or identifiers. If information is insufficient, record an open question instead of guessing.
+- The mandatory checklist must require: resource owner confirmation; Terraform state/import and existing-code ownership checks; business and availability impact review; verification of trusted CIDRs and dependencies; backup/rollback planning; `terraform fmt`, `terraform validate`, and review of `terraform plan`; security/change-management approval; and post-change verification.
+- State explicitly that no generated command or code should be applied until every required check is complete and a human approver signs off.
 
-Output the Terraform code only. Do not wrap it in markdown fences or add any surrounding commentary."""
-
-
-def _strip_code_fences(text):
-    """Remove a surrounding ```...``` markdown fence if the model added one."""
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        lines = stripped.splitlines()
-        # Drop the opening fence line (which may include a language hint).
-        lines = lines[1:]
-        # Drop the closing fence line if present.
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        stripped = "\n".join(lines).strip()
-    return stripped
+Do not present the proposal as approved, complete, or safe to apply."""
 
 
-def generate_remediation_terraform(raw_data, report=None, llm=None, max_retries=3, base_delay=2):
-    """Generate a Terraform snippet that closes the discovered security gaps.
+def generate_remediation_proposal(
+    raw_data,
+    report=None,
+    llm=None,
+    trusted_cidr="10.0.0.0/8",
+    max_retries=3,
+    base_delay=2,
+):
+    """Generate a human-reviewed Markdown remediation proposal.
 
     Includes an automated exponential backoff retry loop to handle transient 
-    AWS LLM throttling thresholds gracefully. Returns valid Terraform HCL.
+    AWS LLM throttling thresholds gracefully. Any Terraform included in the
+    result is explicitly unvalidated candidate code.
     """
     if llm is None:
         llm = init_bedrock_llm()
 
     serialized = json.dumps(raw_data, indent=2, default=str)
     human_content = (
-        "Generate the remediation Terraform for the following AWS "
-        "configuration data.\n\n```json\n"
+        "Create a DRAFT remediation proposal for the following AWS "
+        "configuration data. No changes have been approved or applied. "
+        f"The configured draft trusted CIDR is {trusted_cidr!r}; require a "
+        "reviewer to validate it.\n\n```json\n"
         f"{serialized}\n```"
     )
     if report:
@@ -260,17 +265,17 @@ def generate_remediation_terraform(raw_data, report=None, llm=None, max_retries=
         )
 
     messages = [
-        SystemMessage(content=TERRAFORM_REMEDIATION_SYSTEM_PROMPT),
+        SystemMessage(content=REMEDIATION_PROPOSAL_SYSTEM_PROMPT),
         HumanMessage(content=human_content),
     ]
 
     for attempt in range(1, max_retries + 1):
         try:
             response = llm.invoke(messages)
-            return _strip_code_fences(response.content)
+            return response.content.strip()
         except Exception as exc:
             if attempt == max_retries:
-                print(f"CRITICAL: Bedrock Terraform generation failed after {max_retries} attempts.", file=sys.stderr)
+                print(f"CRITICAL: Bedrock proposal generation failed after {max_retries} attempts.", file=sys.stderr)
                 raise exc
             
             delay = base_delay * (2 ** (attempt - 1))
@@ -278,32 +283,39 @@ def generate_remediation_terraform(raw_data, report=None, llm=None, max_retries=
             time.sleep(delay)
 
 
-def audit_and_remediate(
+def audit_and_propose(
     raw_data,
     llm=None,
     report_path="audit_report.md",
-    terraform_path="remediation.tf",
+    proposal_path="remediation_proposal.md",
+    trusted_cidr="10.0.0.0/8",
     max_retries=3,
     base_delay=2,
 ):
-    """Run the full audit: produce a markdown report and a Terraform snippet.
+    """Run the POC audit and produce two human-readable Markdown documents.
 
-    Generates the markdown security report and the `remediation.tf` Terraform
-    code, writes both to disk, and returns them as a dict with keys "report"
-    and "terraform".
+    The remediation proposal may contain candidate Terraform, but does not
+    apply changes and is not an apply-ready Terraform configuration.
     """
     if llm is None:
         llm = init_bedrock_llm()
 
     report = analyze_security_data(raw_data, llm=llm, max_retries=max_retries, base_delay=base_delay)
-    terraform = generate_remediation_terraform(raw_data, report=report, llm=llm, max_retries=max_retries, base_delay=base_delay)
+    proposal = generate_remediation_proposal(
+        raw_data,
+        report=report,
+        llm=llm,
+        trusted_cidr=trusted_cidr,
+        max_retries=max_retries,
+        base_delay=base_delay,
+    )
 
     with open(report_path, "w", encoding="utf-8") as report_file:
         report_file.write(report)
-    with open(terraform_path, "w", encoding="utf-8") as tf_file:
-        tf_file.write(terraform)
+    with open(proposal_path, "w", encoding="utf-8") as proposal_file:
+        proposal_file.write(proposal)
 
-    return {"report": report, "terraform": terraform}
+    return {"report": report, "proposal": proposal}
 
 
 def collect_aws_data(region_name=None):
@@ -332,12 +344,13 @@ def main():
             temperature=config.get("temperature", 0),
         )
 
-        print("Analyzing configuration and generating remediation (with transient retry safeguards)...")
-        results = audit_and_remediate(
+        print("Analyzing configuration and generating a draft remediation proposal...")
+        results = audit_and_propose(
             raw_data,
             llm=llm,
             report_path=config["output"]["report_path"],
-            terraform_path=config["output"]["terraform_path"],
+            proposal_path=config["output"]["proposal_path"],
+            trusted_cidr=config.get("trusted_cidr", "10.0.0.0/8"),
             max_retries=max_retries,
             base_delay=base_delay,
         )
@@ -356,7 +369,7 @@ def main():
         return 1
 
     print(f"\nReport written to: {config['output']['report_path']}")
-    print(f"Terraform written to: {config['output']['terraform_path']}")
+    print(f"Draft remediation proposal written to: {config['output']['proposal_path']}")
     return 0
 
 

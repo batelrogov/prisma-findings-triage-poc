@@ -1,19 +1,19 @@
-# AWS Security AI Agent configuration
+# Bedrock-Assisted AWS Security Audit POC configuration
 
 # AWS region for both the audited account and Amazon Bedrock.
 # Leave null to use the default from your AWS profile / environment.
 region: null
 
-# Amazon Bedrock model id used for analysis and remediation generation.
+# Amazon Bedrock model id used for analysis and draft proposal generation.
 model_id: anthropic.claude-3-sonnet-20240229-v1:0
 
 # Temperature for the LLM. 0 = strict, deterministic analytical reasoning.
 temperature: 0
 
-# CIDR block that remediation Terraform should allow instead of 0.0.0.0/0.
+# Example CIDR for the draft proposal. A resource owner must validate it.
 trusted_cidr: 10.0.0.0/8
 
 # Output file locations.
 output:
   report_path: audit_report.md
-  terraform_path: remediation.tf
+  proposal_path: remediation_proposal.md
