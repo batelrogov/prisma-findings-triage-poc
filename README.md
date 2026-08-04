@@ -1,129 +1,94 @@
 **Open-Source Reference Architecture & Disclaimer**
-This repository contains an independent, open-source reference architecture developed entirely by the author to demonstrate general modern cloud infrastructure concepts. It is not affiliated with, derived from, or endorsed by any past or present employer. This code is provided as-is for educational and architectural purposes, and anyone (including global engineering teams, community members, or enterprises) is welcome to clone, adapt, and build upon it to solve their own specific infrastructure challenges.
 
-# Bedrock-Assisted AWS Security Audit POC
+This repository contains an independent, open-source proof of concept developed
+for educational and architectural purposes. It is not affiliated with or
+endorsed by any employer or product vendor.
 
-This focused proof of concept explores whether repeated AWS configuration-review
-work can be collected and organized with help from Amazon Bedrock. It currently
-covers two intentionally narrow controls: EC2 Security Group ingress rules and
-S3 Public Access Block settings.
+# Prisma Findings Triage POC
 
-It is not an autonomous remediation system and is not a replacement for AWS
-Security Hub, AWS Config, or a Cloud Security Posture Management (CSPM) platform.
-It produces:
+A focused Phase 1 proof of concept for finding repeated pain points in large
+Prisma Cloud reports. It classifies report rows as:
 
-- A professional **Markdown audit report** (`audit_report.md`) with severity-rated
-  findings and remediation steps.
-- A human-reviewable **draft remediation proposal**
-  (`remediation_proposal.md`) that may contain unvalidated candidate Terraform.
+- **Recurring** — a repeated policy/resource/remediation pattern worth assessing
+  as an automation or preventive-control candidate.
+- **Unique** — an isolated or context-dependent finding that needs individual review.
+- **Needs More Information** — a finding that cannot be routed safely without
+  additional policy, resource, ownership, or management context.
 
-## Safety boundaries
+The POC helps identify where automation may provide value. It does not remediate
+findings, change AWS resources, run scripts, create Terraform, or replace Prisma.
 
-- The tool only reads AWS configuration and invokes Bedrock. It does not modify
-  AWS resources or run Terraform.
-- Generated findings and remediation are AI-assisted drafts and may be incomplete
-  or incorrect.
-- A restrictive Security Group rule does **not** remove an existing permissive
-  rule. Existing exposure must be identified and deliberately removed only after
-  validating ownership, dependencies, and required access.
-- Before using any candidate Terraform, a human must confirm resource ownership,
-  existing Terraform/state/import strategy, trusted CIDRs, and business impact;
-  prepare rollback steps; run `terraform fmt`, `terraform validate`, and
-  `terraform plan`; review the plan; and obtain security/change approval.
-- Never apply generated code directly to an environment.
+## Why this exists
 
-## Requirements
+Large periodic Prisma reports can contain thousands of rows. Before remediation
+starts, a reviewer must identify repeated patterns, prioritize them, and separate
+potential shared fixes from findings that require business context. This project
+turns that first-pass analysis into a consistent, reviewable workflow.
 
-- Python 3.9+
-- AWS credentials with read access to EC2/S3 and Bedrock model invocation
-- Amazon Bedrock model access enabled for the configured model in your region
+## Components
+
+- `prisma_triage_agent.py` — deterministic reference implementation for CSV/XLSX.
+- `COPILOT_AGENT_INSTRUCTIONS.md` — guardrails and expected output for a Microsoft
+  Copilot agent that reviews the report.
+- `config.yaml` — recurring threshold, column aliases, worksheet, and output paths.
 
 ## Installation
 
-```bash
-pip install -r requirements.txt
-```
-
-## Configuration
-
-Settings live in `config.yaml`:
-
-| Key | Description | Default |
-| --- | --- | --- |
-| `region` | AWS region for the audit and Bedrock. `null` uses your profile default. | `null` |
-| `model_id` | Bedrock model id used for analysis. | `anthropic.claude-3-sonnet-20240229-v1:0` |
-| `temperature` | LLM temperature (0 = deterministic). | `0` |
-| `trusted_cidr` | Example CIDR included in the draft; it must be validated by an owner. | `10.0.0.0/8` |
-| `output.report_path` | Markdown report output path. | `audit_report.md` |
-| `output.proposal_path` | Draft Markdown proposal output path. | `remediation_proposal.md` |
-
-## AWS credentials
-
-Provide credentials via any standard mechanism:
+Python 3.9 or newer is required.
 
 ```bash
-aws configure
-# or environment variables:
-export AWS_ACCESS_KEY_ID=...
-export AWS_SECRET_ACCESS_KEY=...
-export AWS_DEFAULT_REGION=us-east-1
-```
-
-### Minimum IAM permissions
-
-```json
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": [
-        "ec2:DescribeSecurityGroups",
-        "s3:ListAllMyBuckets",
-        "s3:GetBucketPublicAccessBlock",
-        "bedrock:InvokeModel"
-      ],
-      "Resource": "*"
-    }
-  ]
-}
+python -m pip install -r requirements.txt
 ```
 
 ## Usage
 
-Run the full audit end to end:
-
 ```bash
-python audit_agent.py
+python prisma_triage_agent.py path/to/prisma-findings.csv
 ```
 
-This collects AWS data, runs the analysis, and writes `audit_report.md` and
-`remediation_proposal.md` to the paths defined in `config.yaml`. It does not
-apply changes.
+CSV and XLSX input are supported. The default outputs are:
 
-### Programmatic use
+- `triage_report.md` — prioritized, human-readable pattern summary.
+- `categorized_findings.csv` — original normalized findings plus category and route.
 
-```python
-from audit_agent import collect_aws_data, init_bedrock_llm, audit_and_propose
+Column names vary between Prisma exports. Update `column_aliases` in `config.yaml`
+when the report uses different headers.
 
-raw_data = collect_aws_data(region_name="us-east-1")
-llm = init_bedrock_llm()
-results = audit_and_propose(raw_data, llm=llm)
-print(results["report"])
-```
+## Classification approach
 
-## How it works
+A complete finding needs a policy, resource type, and resource identifier. Complete
+findings are grouped by policy, resource type, and remediation text. A group that
+meets `recurring_min_count` is marked `Recurring`; smaller groups are `Unique`.
+Incomplete findings are marked `Needs More Information` rather than guessed.
 
-1. `collect_aws_data()` — fetches Security Group ingress rules and S3 public
-   access block settings into a single structured dict.
-2. `analyze_security_data()` — sends the data to Bedrock with a strict auditor
-   system prompt and returns a Markdown report.
-3. `generate_remediation_proposal()` — produces a Markdown draft with review
-   questions, mandatory validation steps, and optional candidate Terraform.
-4. `audit_and_propose()` — orchestrates both and writes the output files.
+Severity and group size determine report ordering. They do not authorize action.
 
-## Disclaimer
+## Suggested routes
 
-This educational POC has intentionally limited coverage. Its output is not a
-security certification and should not be treated as production-ready change
-automation. Candidate code requires the complete human review described above.
+- A repeated pattern may be a Terraform template candidate only after the existing
+  code and Terraform state confirm ownership.
+- A reported unmanaged pattern may be a script-assisted or import candidate, but
+  still requires human review, scope selection, dry run, impact review, rollback,
+  and approval.
+- Unique findings remain with a resource owner for contextual review.
+- Patterns caused by the provisioning process may justify a preventive control.
+
+## Safety boundaries
+
+- The tool performs classification only.
+- Absence from a report field is not proof that a resource was created manually.
+- Terraform ownership must be verified against both code and state.
+- All suggested routes are candidates, not approved remediation.
+- Resource ownership, business impact, dependencies, rollback, and approval must
+  be validated before any change.
+
+## Roadmap
+
+1. **Current:** report ingestion, normalization, classification, and prioritization.
+2. **Ownership enrichment:** connect findings to approved code/state and owner data.
+3. **Proposal generation:** prepare review-only remediation proposals.
+4. **Read-only AWS MCP enrichment:** retrieve current resource context without changes.
+5. **Governed lifecycle:** route approved work through an existing Terraform PR or
+   controlled runbook, with validation and an audit trail.
+
+Each future phase remains behind explicit human approval gates.

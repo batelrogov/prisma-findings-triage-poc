@@ -1,19 +1,24 @@
-# Bedrock-Assisted AWS Security Audit POC configuration
+# Prisma Findings Triage POC configuration
 
-# AWS region for both the audited account and Amazon Bedrock.
-# Leave null to use the default from your AWS profile / environment.
-region: null
+# A pattern must contain at least this many findings to be called recurring.
+recurring_min_count: 3
 
-# Amazon Bedrock model id used for analysis and draft proposal generation.
-model_id: anthropic.claude-3-sonnet-20240229-v1:0
+# Optional worksheet name for XLSX input. null uses the active worksheet.
+sheet_name: null
 
-# Temperature for the LLM. 0 = strict, deterministic analytical reasoning.
-temperature: 0
-
-# Example CIDR for the draft proposal. A resource owner must validate it.
-trusted_cidr: 10.0.0.0/8
-
-# Output file locations.
 output:
-  report_path: audit_report.md
-  proposal_path: remediation_proposal.md
+  report_path: triage_report.md
+  categorized_path: categorized_findings.csv
+
+# Add aliases here when the Prisma export uses different column names.
+column_aliases:
+  policy: [policy, policy name, finding type, alert name]
+  resource_id: [resource id, resource, resource name, asset id]
+  resource_type: [resource type, asset type, cloud type]
+  severity: [severity, risk, priority]
+  account: [account, account name, account id, cloud account]
+  region: [region, cloud region]
+  description: [description, finding description, issue]
+  remediation: [remediation, recommendation, resolution]
+  owner: [owner, resource owner, team]
+  terraform_status: [terraform status, terraform managed, iac status, management status]
