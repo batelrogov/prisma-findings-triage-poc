@@ -39,9 +39,9 @@ fields such as `Hostname`, `CVE ID`, `Type`, `Severity`, `Packages`,
 
 ## Components
 
-- `prisma_triage_agent.py` — deterministic CSV/XLSX reference implementation.
-- `COPILOT_AGENT_INSTRUCTIONS.md` — guardrails and expected output for a Microsoft
-  Copilot agent reviewing the report.
+- `prisma_triage_engine.py` — deterministic CSV/XLSX reference implementation.
+- `COPILOT_REVIEW_GUIDELINES.md` — guardrails and expected output for a future
+  approved Microsoft Copilot review interface.
 - `config.yaml` — distinct-resource threshold, column aliases, worksheet, and outputs.
 
 ## Installation
@@ -55,7 +55,7 @@ python -m pip install -r requirements.txt
 ## Usage
 
 ```bash
-python prisma_triage_agent.py path/to/prisma-findings.csv
+python prisma_triage_engine.py path/to/prisma-findings.csv
 ```
 
 CSV and XLSX input are supported. The default outputs are:
